@@ -1,11 +1,12 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { RefreshCw, Dice5, User, Users, Globe, Ticket, Loader2, Layout, Grid, columns, GalleryVertical, Timer } from 'lucide-react';
-import { FilterType, GAME_ITEMS, GameItem, CollageMode } from '../types';
+import { RefreshCw, Dice5, User, Users, Globe, Ticket, Layout, Grid, GalleryVertical, Layers, Grid3X3, Film, Timer, Volume2, VolumeX } from 'lucide-react';
+import { FilterType, GAME_ITEMS, GameItem, CollageMode, TimerDuration } from '../types';
 
 // Declare face-api on window
 declare global {
   interface Window {
     faceapi: any;
+    webkitAudioContext: typeof AudioContext;
   }
 }
 
@@ -13,11 +14,58 @@ interface CameraInterfaceProps {
   onCapture: (images: string[], mode: CollageMode) => void;
 }
 
+// Simple Audio Synthesizer to avoid needing external assets
+const playSound = (type: 'BEEP' | 'SHUTTER') => {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    if (type === 'BEEP') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, ctx.currentTime); // A5
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.1);
+    } else if (type === 'SHUTTER') {
+        // White noise burst for shutter
+        const bufferSize = ctx.sampleRate * 0.1; // 100ms
+        const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < bufferSize; i++) {
+            data[i] = Math.random() * 2 - 1;
+        }
+        const noise = ctx.createBufferSource();
+        noise.buffer = buffer;
+        
+        // Filter to make it sound mechanical
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = 1000;
+
+        noise.connect(filter);
+        filter.connect(gain);
+        gain.connect(ctx.destination);
+        
+        gain.gain.setValueAtTime(0.5, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+        noise.start();
+    }
+};
+
 export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [activeFilter, setActiveFilter] = useState<FilterType>(FilterType.NONE);
   const [activeCollage, setActiveCollage] = useState<CollageMode>(CollageMode.SINGLE);
+  const [timerDuration, setTimerDuration] = useState<TimerDuration>(3);
+  const [soundEnabled, setSoundEnabled] = useState(true);
   
   const [isModelLoaded, setIsModelLoaded] = useState(false);
   const [loadingError, setLoadingError] = useState<string | null>(null);
@@ -76,7 +124,7 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) =
     };
   }, []);
 
-  // 2. Rendering Loop (Same filter logic, just optimized for resized canvas)
+  // 2. Rendering Loop
   const startRendering = () => {
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -89,7 +137,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) =
             const options = new window.faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 });
             const detections = await window.faceapi.detectAllFaces(video, options);
             const displaySize = { width: canvas.width, height: canvas.height };
-            // Simple resize without complex mirror calculation for now, visual only
             const resizedDetections = window.faceapi.resizeResults(detections, displaySize);
             detectionsRef.current = resizedDetections;
         }
@@ -196,7 +243,6 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) =
 
   const drawGamification = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
       if (!gameActive && !gameResult) return;
-      // Static center top for desktop stability
       const boxW = 400;
       const boxH = 150;
       const x = width/2;
@@ -231,21 +277,31 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) =
 
   // --- LOGIC: Collage & Countdown ---
 
+  const getShotsCount = (mode: CollageMode) => {
+    switch (mode) {
+        case CollageMode.SINGLE: return 1;
+        case CollageMode.GRID_2X2: return 4;
+        case CollageMode.STRIP_3: return 3;
+        case CollageMode.STRIP_4: return 4;
+        case CollageMode.GRID_2X3: return 6;
+        case CollageMode.GRID_3X3: return 9;
+        default: return 1;
+    }
+  };
+
   const triggerCaptureSequence = async () => {
     if (isCapturing) return;
     setIsCapturing(true);
     setCapturedBuffer([]);
 
-    const shotsNeeded = activeCollage === CollageMode.SINGLE ? 1 
-                      : activeCollage === CollageMode.GRID_2X2 ? 4 
-                      : 3; // Strip
-
+    const shotsNeeded = getShotsCount(activeCollage);
     const buffer: string[] = [];
 
     for (let i = 0; i < shotsNeeded; i++) {
         // Start Countdown
-        for (let c = 3; c > 0; c--) {
+        for (let c = timerDuration; c > 0; c--) {
             setCountdown(c);
+            if (soundEnabled) playSound('BEEP');
             await new Promise(r => setTimeout(r, 1000));
         }
         setCountdown(0); // "Snap!"
@@ -254,17 +310,18 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) =
         const flashEl = document.getElementById('camera-flash');
         if(flashEl) {
             flashEl.style.opacity = '1';
-            setTimeout(() => flashEl.style.opacity = '0', 100);
+            if (soundEnabled) playSound('SHUTTER');
+            setTimeout(() => flashEl.style.opacity = '0', 100); // 100ms flash duration
         }
 
         // Capture
         if (canvasRef.current) {
             const data = canvasRef.current.toDataURL('image/png', 1.0);
             buffer.push(data);
-            setCapturedBuffer([...buffer]); // Update preview state if we want small thumbs
+            setCapturedBuffer([...buffer]); 
         }
 
-        // Small delay between shots if not last
+        // Delay between shots
         if (i < shotsNeeded - 1) {
             await new Promise(r => setTimeout(r, 1000));
         }
@@ -300,14 +357,19 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) =
 
   const collages = [
     { id: CollageMode.SINGLE, icon: <Layout />, label: 'Single' },
-    { id: CollageMode.GRID_2X2, icon: <Grid />, label: 'Grid 4' },
+    { id: CollageMode.GRID_2X2, icon: <Grid />, label: 'Grid 2x2' },
     { id: CollageMode.STRIP_3, icon: <GalleryVertical />, label: 'Strip 3' },
+    { id: CollageMode.STRIP_4, icon: <Film />, label: 'Strip 4' },
+    { id: CollageMode.GRID_2X3, icon: <Layers />, label: 'Grid 6' },
+    { id: CollageMode.GRID_3X3, icon: <Grid3X3 />, label: 'Grid 9' },
   ];
+
+  const timerOptions: TimerDuration[] = [3, 5, 10];
 
   return (
     <div className="flex h-screen w-full bg-black overflow-hidden relative">
-        {/* Flash Overlay */}
-        <div id="camera-flash" className="absolute inset-0 bg-white opacity-0 pointer-events-none transition-opacity duration-100 z-50"></div>
+        {/* Flash Overlay - Bright White, z-50 */}
+        <div id="camera-flash" className="absolute inset-0 bg-white opacity-0 pointer-events-none transition-opacity duration-75 z-[60]"></div>
 
         {/* LEFT: Camera Canvas */}
         <div className="flex-1 relative bg-gray-900 flex items-center justify-center overflow-hidden">
@@ -331,41 +393,70 @@ export const CameraInterface: React.FC<CameraInterfaceProps> = ({ onCapture }) =
             {/* Collage Progress Indicator */}
             {isCapturing && (
                  <div className="absolute top-8 right-8 bg-black/50 px-4 py-2 rounded-full text-white font-space border border-white/20">
-                    Shot {capturedBuffer.length + 1} / {activeCollage === CollageMode.SINGLE ? 1 : activeCollage === CollageMode.GRID_2X2 ? 4 : 3}
+                    Shot {capturedBuffer.length + 1} / {getShotsCount(activeCollage)}
                  </div>
             )}
         </div>
 
         {/* RIGHT: Control Panel */}
-        <div className="w-96 h-full bg-[#111] border-l border-white/10 flex flex-col p-6 space-y-8 overflow-y-auto z-20 shadow-2xl">
-            <div>
-                <h2 className="text-white font-space text-2xl font-bold mb-1">UniVerse Cam</h2>
-                <p className="text-gray-400 text-sm">Control Center</p>
+        <div className="w-96 h-full bg-[#111] border-l border-white/10 flex flex-col p-6 space-y-6 overflow-y-auto z-20 shadow-2xl">
+            <div className="flex justify-between items-start">
+                <div>
+                    <h2 className="text-white font-space text-2xl font-bold mb-1">UniVerse Cam</h2>
+                    <p className="text-gray-400 text-sm">Control Center</p>
+                </div>
+                <button onClick={() => setSoundEnabled(!soundEnabled)} className="text-gray-400 hover:text-white">
+                    {soundEnabled ? <Volume2 /> : <VolumeX />}
+                </button>
+            </div>
+
+            {/* Timer Selection */}
+            <div className="space-y-2">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider flex items-center gap-2">
+                    <Timer size={14} /> Timer
+                </label>
+                <div className="flex bg-gray-800 p-1 rounded-lg">
+                    {timerOptions.map(t => (
+                        <button
+                            key={t}
+                            onClick={() => setTimerDuration(t)}
+                            className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${
+                                timerDuration === t 
+                                ? 'bg-white text-black shadow-lg' 
+                                : 'text-gray-400 hover:text-white'
+                            }`}
+                        >
+                            {t}s
+                        </button>
+                    ))}
+                </div>
             </div>
 
             {/* 1. Collage Mode */}
-            <div className="space-y-3">
+            <div className="space-y-2">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Shooting Mode</label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                     {collages.map((c) => (
                         <button 
                             key={c.id}
                             onClick={() => setActiveCollage(c.id)}
-                            className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all ${
+                            className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
                                 activeCollage === c.id 
                                 ? 'bg-purple-900/50 border-purple-500 text-white' 
                                 : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700'
                             }`}
                         >
-                            {React.cloneElement(c.icon as React.ReactElement, { size: 20 })}
-                            <span className="text-[10px] mt-1 font-medium">{c.label}</span>
+                            <div className={`${activeCollage === c.id ? 'text-purple-300' : 'text-gray-500'}`}>
+                                {React.cloneElement(c.icon as React.ReactElement, { size: 18 })}
+                            </div>
+                            <span className="text-[11px] font-medium uppercase tracking-wide">{c.label}</span>
                         </button>
                     ))}
                 </div>
             </div>
 
             {/* 2. Filters */}
-            <div className="space-y-3">
+            <div className="space-y-2">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Visual Filters</label>
                 <div className="grid grid-cols-3 gap-2">
                     {filters.map((f) => (

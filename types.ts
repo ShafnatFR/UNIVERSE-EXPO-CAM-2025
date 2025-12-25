@@ -13,9 +13,28 @@ export enum FilterType {
 }
 
 export enum CollageMode {
-  SINGLE = 'SINGLE',
-  GRID_2X2 = 'GRID_2X2',
-  STRIP_3 = 'STRIP_3',
+  SINGLE = 'SINGLE',         // 1 Photo
+  GRID_2X2 = 'GRID_2X2',     // 4 Photos (Square-ish)
+  STRIP_3 = 'STRIP_3',       // 3 Photos (Vertical Strip)
+  STRIP_4 = 'STRIP_4',       // 4 Photos (Classic Booth Strip)
+  GRID_2X3 = 'GRID_2X3',     // 6 Photos (Landscape Grid)
+  GRID_3X3 = 'GRID_3X3',     // 9 Photos (Dense Grid)
+}
+
+export type TimerDuration = 3 | 5 | 10;
+
+export enum FrameType {
+  NONE = 'NONE',
+  COCKPIT = 'COCKPIT',
+  MAGAZINE = 'MAGAZINE'
+}
+
+export interface Sticker {
+  id: number;
+  type: string; // Emoji char or image identifier
+  x: number;
+  y: number;
+  scale: number;
 }
 
 export interface GameItem {
