@@ -1,0 +1,7 @@
+{
+  "name": "UniVerse Cam",
+  "description": "A space-themed photo booth app for Universe Expo 2025 with filters and gamification.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
